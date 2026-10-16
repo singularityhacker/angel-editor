@@ -1,0 +1,35 @@
+# Angel Editor: Vision
+
+## What it is
+Angel Editor is an open-source, local-first CLI for filtering video you already own: language, nudity and sexual content, violence, and whatever else you choose. It works like VidAngel or SkipIt, except that everything runs on your own machine against your own files. No streaming service, crowdsourced skip list, or third party ever sees what you watch.
+
+You bring your own API keys for the optional AI features. The core works offline.
+
+## Who it's for and the boundaries
+- People filtering media **they have purchased**, for **private, personal viewing**.
+- It is not for redistribution. Angel Editor never uploads, shares, or publishes media. It doesn't break DRM. You point it at files you already have and are entitled to edit for your own use.
+- (In the US, the Family Movie Act of 2005 protects making private viewing filters for lawfully owned copies. Check your own jurisdiction.)
+
+## How it works (the pipeline)
+1. **Analyze.** Scan an episode and produce a timeline of *events*: a profane word at 12:03.4–12:03.9, a nude scene from 31:10 to 31:42, and so on. Each event gets a category, a severity, and a confidence score.
+2. **Decide.** Apply your *filter profile*, with per-category thresholds like VidAngel's levels (for example: language set to "mute strong profanity", nudity set to "skip all", violence set to "skip only graphic"). This turns events into *actions*: mute, bleep, skip, blur, or (later) replace.
+3. **Render or play.**
+   - *Non-destructive (default):* write a sidecar filter file (an EDL that players like mpv, MPlayer, and Kodi understand) so the original file is never touched.
+   - *Rendered:* write a new, edited copy with ffmpeg.
+4. **Review.** A filter file is plain text you can inspect and hand-tune before rendering.
+
+## Progressive elaboration (roadmap)
+- **v0, language filtering that works.** Transcribe locally with Whisper (word-level timestamps), match against a configurable word list with severity tiers, and mute or bleep exactly those words. Use existing subtitles as a fast path when they're present. Output an EDL or a rendered copy. Batch over a whole season folder.
+- **v1, visual detection.** Detect shots, sample frames per shot, and run local classifiers (nudity and sexual content, violence and gore) with thresholds per category. Merge detections into scene-level skip ranges, with padding and minimum durations.
+- **v2, smarter judgment with AI.** Optionally send flagged segments (frames plus transcript) to a vision-language model (your own key, or a local model) to grade severity and context ("a kiss" vs "a sex scene", "cartoon violence" vs "gore"). This cuts false positives and makes thresholds feel human.
+- **v3, generative gap filling.** Instead of a hard jump cut, generate a short bridge clip from the frames just before and just after a removed scene, using frame interpolation or a first-frame/last-frame video model. Audio is cross-faded or regenerated.
+- **Later:** a review UI, shareable filter profiles (profiles only, never media), and a series mode that reuses recurring intros and characters across episodes.
+
+## Principles
+- **Private by default.** It's local first, and cloud AI is opt-in per feature, sending the minimum (frames or short clips, never whole files).
+- **Non-destructive by default.** Sidecar filter files come first, and rendering is optional.
+- **Transparent.** Every action is explainable: what was detected, by what, with what confidence, and which rule fired.
+- **Your thresholds, not ours.** Profiles are plain config.
+
+## Format
+A Python CLI. Python has the best ecosystem for this work (Whisper, PySceneDetect, PyTorch/ONNX classifiers, ffmpeg bindings), and it's easy for others to install with `pipx` or `uv`.
