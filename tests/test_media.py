@@ -1,0 +1,243 @@
+import array
+import hashlib
+import json
+import math
+import shutil
+import subprocess
+
+import pytest
+
+from angel_editor.cli import main
+from angel_editor.media import probe, render, run
+from angel_editor.pipeline import analyze
+from angel_editor.schema import Word
+
+pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg unavailable")
+
+
+@pytest.fixture(params=[2, 6])
+def media(tmp_path, request):
+    path = tmp_path / "sample.mp4"
+    layout = "stereo" if request.param == 2 else "5.1"
+    expressions = "|".join(["0.15*sin(2*PI*80*t)"] * request.param)
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=25",
+            "-f",
+            "lavfi",
+            "-i",
+            f"aevalsrc={expressions}:s=48000:c={layout}",
+            "-t",
+            "2",
+            "-c:v",
+            "mpeg4",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ]
+    )
+    return path, request.param
+
+
+def decode(path, channels):
+    data = subprocess.check_output(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:a:0",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-",
+        ]
+    )
+    samples = array.array("f")
+    samples.frombytes(data)
+    return [samples[c::channels] for c in range(channels)]
+
+
+def rms(samples):
+    return math.sqrt(sum(s * s for s in samples) / len(samples))
+
+
+def video_hash(path):
+    return hashlib.sha256(
+        subprocess.check_output(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-c",
+                "copy",
+                "-f",
+                "data",
+                "-",
+            ]
+        )
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("mode", ["mute", "bleep"])
+def test_render(media, mode):
+    path, channels = media
+    output = path.with_name("out.mp4")
+    info = probe(path)
+    render(path, output, info, [(500000, 1300000)], mode)
+    assert video_hash(path) == video_hash(output)
+    assert abs(float(probe(output)["format"]["duration"]) - 2) < 0.05
+    for channel, samples in enumerate(decode(output, channels)):
+        window = samples[round(0.7 * 48000) : round(1.1 * 48000)]
+        assert rms(samples[5000:15000]) > 0.03
+        if mode == "mute" or (channels == 6 and channel == 3):
+            assert rms(window) < 0.001
+        else:
+
+            def energy(frequency, window=window):
+                return abs(
+                    sum(
+                        s
+                        * complex(
+                            math.cos(2 * math.pi * frequency * i / 48000),
+                            math.sin(2 * math.pi * frequency * i / 48000),
+                        )
+                        for i, s in enumerate(window)
+                    )
+                )
+
+            assert energy(1000) > 20 * energy(80)
+    with pytest.raises(FileExistsError):
+        render(path, output, info, [])
+    with pytest.raises(ValueError):
+        render(path, path, info, [], overwrite=True)
+
+
+def settings(**overrides):
+    return dict(
+        subs="auto",
+        asr="off",
+        model="small",
+        language="en",
+        no_cache=False,
+        strictness="moderate",
+        mode="mute",
+        **overrides,
+    )
+
+
+def test_subs_cli_batch(media, capsys):
+    path, _ = media
+    path.with_suffix(".srt").write_text("1\n00:00:00,500 --> 00:00:01,000\nOh shit!\n")
+    identity, events, warnings = analyze(path, probe(path), settings())
+    assert identity and events[0].accuracy == "cue" and warnings
+    assert events[0].start_us == 500000
+    assert main(["scan", str(path), "--asr", "off"]) == 0
+    assert main(["clean", str(path), "--asr", "off", "--json", "--edl", "kodi"]) == 0
+    data = json.loads(path.with_name("sample.angel.json").read_text())
+    assert data["events"][0]["source"] == "subs"
+    assert main(["clean", str(path), "--asr", "off"]) == 1
+    (path.parent / "broken.mp4").write_text("broken")
+    assert main(["clean", str(path.parent), "--asr", "off", "--overwrite"]) == 1
+    assert "FAIL" in capsys.readouterr().err
+
+
+def test_mock_asr_cache(media, tmp_path, monkeypatch):
+    path, _ = media
+    monkeypatch.setenv("ANGEL_CACHE_DIR", str(tmp_path / "cache"))
+
+    class Backend:
+        calls = 0
+
+        def transcribe(self, audio, **kwargs):
+            self.calls += 1
+            assert kwargs == {"model": "small", "language": "en"}
+            return [Word(100000, 200000, "shit")]
+
+    backend = Backend()
+    config = settings()
+    config.update(subs="off", asr="auto")
+    first = analyze(path, probe(path), config, transcriber=backend)
+    assert first[1][0].source == "asr"
+    assert analyze(path, probe(path), config, transcriber=backend) == first
+    assert backend.calls == 1
+    path.with_suffix(".vtt").write_text("WEBVTT\n\n00:00.500 --> 00:01.000\nshit\n")
+    config["subs"] = "auto"
+    assert analyze(path, probe(path), config, transcriber=backend)[1][0].accuracy == "word"
+    assert backend.calls == 2
+
+
+def test_dry_no_changes(media):
+    path, _ = media
+    path.with_suffix(".srt").write_text("1\n00:00:00,500 --> 00:00:01,000\nhello\n")
+    assert main(["clean", str(path), "--asr", "off", "--dry-run"]) == 0
+    assert not path.with_name("sample.angel.mp4").exists()
+    assert main(["clean", str(path), "--asr", "off"]) == 0
+    assert video_hash(path) == video_hash(path.with_name("sample.angel.mp4"))
+
+
+def test_embedded_and_multiple_tracks(media):
+    path, channels = media
+    subs = path.with_suffix(".srt")
+    subs.write_text("1\n00:00:00,500 --> 00:00:01,000\nshit\n")
+    embedded = path.with_name("embedded.mkv")
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-i",
+            str(subs),
+            "-map",
+            "0:v",
+            "-map",
+            "0:a",
+            "-map",
+            "0:a",
+            "-map",
+            "1:0",
+            "-c",
+            "copy",
+            "-metadata:s:a:1",
+            "language=eng",
+            str(embedded),
+        ]
+    )
+    subs.unlink()
+    info = probe(embedded)
+    _, events, _ = analyze(embedded, info, settings())
+    assert events[0].accuracy == "cue"
+    output = path.with_name("multi.mp4")
+    render(embedded, output, info, [(400000, 1400000)])
+    output_info = probe(output)
+    audio = [s for s in output_info["streams"] if s["codec_type"] == "audio"]
+    assert len(audio) == 2 and audio[1]["tags"]["language"] == "eng"
+    assert (
+        next(s for s in output_info["streams"] if s["codec_type"] == "subtitle")["codec_name"]
+        == "mov_text"
+    )
+    for track in range(2):
+        data = subprocess.check_output(
+            ["ffmpeg", "-v", "error", "-i", str(output), "-map", f"0:a:{track}", "-f", "f32le", "-"]
+        )
+        samples = array.array("f")
+        samples.frombytes(data)
+        for channel in range(channels):
+            assert rms(samples[channel::channels][35000:50000]) < 0.001
