@@ -1,0 +1,50 @@
+version = 1
+exceptions = ["Scunthorpe", "assassin", "cocktail"]
+
+[[entries]]
+term = "damn"
+variants = ["damned", "dammit"]
+category = "profanity"
+severity = 1
+
+[[entries]]
+term = "hell"
+variants = []
+category = "blasphemy"
+severity = 1
+
+[[entries]]
+term = "shit"
+variants = ["shits", "shitty", "bullshit"]
+category = "bodily"
+severity = 2
+
+[[entries]]
+term = "fuck"
+variants = ["fucks", "fucked", "fucking", "motherfucker", "motherfuckers"]
+category = "profanity"
+severity = 3
+
+[[entries]]
+term = "asshole"
+variants = ["assholes"]
+category = "profanity"
+severity = 2
+
+[[entries]]
+term = "son of a bitch"
+variants = []
+category = "profanity"
+severity = 2
+
+[[entries]]
+term = "blowjob"
+variants = ["blowjobs"]
+category = "sexual"
+severity = 3
+
+[[entries]]
+term = "faggot"
+variants = ["faggots"]
+category = "slur"
+severity = 3
