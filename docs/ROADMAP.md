@@ -6,13 +6,13 @@ Shared rules for all milestones:
 
 - Intervals are half-open `[start, end)`, stored as integer microseconds in original presentation timestamps. Never compute time as `frame_number / nominal_fps`.
 - The canonical JSON timeline is the source of truth. EDL files are exports and cannot hold categories, confidence, or provenance.
-- Sidecar output is the default. Rendering is optional.
+- An edited copy (MP4 in, clean MP4 out) is the default output. Sidecar EDL/JSON exports are optional flags.
 - Cloud features are opt-in, use the user's own key, and send minimal data.
 - Unknown or failed analysis is never treated as safe.
 
 ## v0: language filtering that works
 
-**Goal.** Reliably mute or bleep profanity in files the user owns, with sidecar or audio-only rendered output.
+**Goal.** Reliably mute or bleep profanity in files the user owns, producing a clean edited MP4 by default (audio re-encoded, video stream-copied), with optional EDL/JSON sidecars.
 
 **Scope**
 - Python 3.11 CLI (`angel`), `pyproject.toml`, `src/angel_editor/` layout, optional extras (for example `[speech]`, `[align]`).
@@ -23,8 +23,9 @@ Shared rules for all milestones:
 - Canonical JSON timeline with provenance (source, evidence, word text, confidence).
 - Filter profile in TOML with per-category `min_severity` and `action`, plus manual per-occurrence overrides.
 - Initial mute padding of 80–150 ms before and 100–200 ms after, tuned by listening tests. Flag unaligned words and implausible timings for review.
-- Exports: Kodi and MPlayer EDL (separate writers).
-- Render: ffmpeg audio re-encode with video stream copy; mute and bleep (about 1 kHz tone, short fades, configurable level). Every output channel muted over each interval. Explicit policy for each retained audio track.
+- Default output: edited MP4 beside the source (`<name>.angel.mp4`).
+- Optional exports: `--edl kodi|mplayer` (separate writers) and `--json` timeline.
+- Render (default): ffmpeg audio re-encode with video stream copy; mute and bleep (about 1 kHz tone, short fades, configurable level). Every output channel muted over each interval. Explicit policy for each retained audio track.
 - Batch mode over a folder, with a per-file report of unsupported tracks.
 - Resumable cache keyed by media, model, and config fingerprints.
 - `angel doctor`: ffmpeg/ffprobe, hardware, model availability, runtime compatibility.
