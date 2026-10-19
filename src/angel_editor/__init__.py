@@ -1,1 +1,1 @@
-"""Local-first language filtering."""
+"""Local-first language and visual filtering."""

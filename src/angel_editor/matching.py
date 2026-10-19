@@ -28,7 +28,7 @@ def match(words, strictness="moderate", profile=None, source="asr", mode="mute")
     result = []
     for entry in entries:
         minimum = profile.get(entry["category"], {}).get(
-            "min_severity", {"strict": 1, "moderate": 2, "mild": 3}[strictness]
+            "min_severity", {"strict": 1, "moderate": 2, "mild": 3, "lenient": 3}[strictness]
         )
         if entry["severity"] < minimum:
             continue

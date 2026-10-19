@@ -80,3 +80,79 @@ def render(path, output, info, spans, mode="mute", level=-18, overwrite=False):
                 raise ValueError("Bitmap subtitles cannot be retained in MP4")
         run(args + ["-movflags", "+faststart", str(temporary)])
         temporary.replace(output)
+
+
+def render_cuts(
+    path, output, info, spans, skips, mode="mute", level=-18, overwrite=False, preset="medium"
+):
+    """Apply audio edits in source time, then trim identical A/V ranges and concat."""
+    from .visual.intervals import merge
+
+    path, output = Path(path), Path(output)
+    if path.resolve() == output.resolve():
+        raise ValueError("Output must differ from input")
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"Output exists: {output}; use --overwrite")
+    duration = round(float(info["format"]["duration"]) * 1e6)
+    retained, cursor = [], 0
+    for a, b in merge(skips):
+        a, b = max(0, a), min(duration, b)
+        if a > cursor:
+            retained.append((cursor, a))
+        cursor = max(cursor, b)
+    if cursor < duration:
+        retained.append((cursor, duration))
+    if not retained:
+        raise ValueError("Skip intervals remove the entire video")
+    audio = [s for s in info["streams"] if s["codec_type"] == "audio"]
+    with tempfile.TemporaryDirectory(dir=output.parent) as directory:
+        # Reuse the v0 all-channel mute/bleep implementation before cutting.
+        source = path
+        if spans:
+            source = Path(directory) / "muted.mp4"
+            render(path, source, info, spans, mode, level)
+        graph = []
+        for j, (a, b) in enumerate(retained):
+            graph.append(f"[0:v:0]trim=start={a / 1e6}:end={b / 1e6},setpts=PTS-{a / 1e6}/TB[v{j}]")
+            for i in range(len(audio)):
+                graph.append(
+                    f"[0:a:{i}]atrim=start={a / 1e6}:end={b / 1e6},asetpts=PTS-{a / 1e6}/TB[a{i}_{j}]"
+                )
+        inputs = "".join(
+            f"[v{j}]" + "".join(f"[a{i}_{j}]" for i in range(len(audio)))
+            for j in range(len(retained))
+        )
+        outputs = "[vout]" + "".join(f"[a{i}out]" for i in range(len(audio)))
+        graph.append(f"{inputs}concat=n={len(retained)}:v=1:a={len(audio)}{outputs}")
+        maps = ["-map", "[vout]"]
+        for i in range(len(audio)):
+            maps += ["-map", f"[a{i}out]"]
+        script = Path(directory) / "cuts.txt"
+        script.write_text(";\n".join(graph))
+        temporary = Path(directory) / "cut.mp4"
+        args = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-i",
+            str(source),
+            "-filter_complex_script",
+            str(script),
+            *maps,
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            preset,
+            "-c:a",
+            "aac",
+            "-map_chapters",
+            "-1",
+        ]
+        for i, stream in enumerate(audio):
+            for key, value in stream.get("tags", {}).items():
+                args += [f"-metadata:s:a:{i}", f"{key}={value}"]
+        run(args + ["-movflags", "+faststart", str(temporary)])
+        temporary.replace(output)
