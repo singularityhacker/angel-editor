@@ -9,9 +9,29 @@ def sample_frames(path, fps=2, start=0, end=None):
     """Stream bounded BGR frames with presentation timestamps; close on early exit."""
     import numpy as np
 
-    filters = f"select='gte(t,{start})"
-    if end is not None:
-        filters += f"*lt(t,{end})"
+    from ..media import run
+
+    # -copyts keeps container timestamps, which begin at start_time (e.g. 1.4 s for
+    # MPEG-TS); seeks are offset by it too, so shift to and from zero-based media time.
+    origin = float(
+        run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=start_time",
+                "-of",
+                "default=nw=1:nk=1",
+                str(path),
+            ]
+        ).strip()
+        or 0
+    )
+    first, last = start + origin, None if end is None else end + origin
+    filters = f"select='gte(t,{first})"
+    if last is not None:
+        filters += f"*lt(t,{last})"
     filters += (
         f"',fps={fps},scale=w='min(640,iw)':h='min(640,ih)'"
         ":force_original_aspect_ratio=decrease,format=bgr24,showinfo"
@@ -83,6 +103,7 @@ def sample_frames(path, fps=2, start=0, end=None):
                 if not block:
                     raise RuntimeError("Incomplete sampled frame: " + "".join(errors)[-3000:])
                 data.extend(block)
+            t -= origin
             if t >= start and (end is None or t < end):
                 yield t, np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
         if process.wait():

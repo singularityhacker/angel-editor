@@ -316,6 +316,8 @@ def test_sampler_streams_and_closes(media, monkeypatch, tmp_path):
     popen = subprocess.Popen
 
     def paced_decoder(args, **kwargs):
+        if args[0] == "ffprobe":
+            return popen(args, **kwargs)
         assert args[-1] == "pipe:1" and "rawvideo" in args
         args.insert(args.index("-i"), "-re")
         process = popen(args, **kwargs)
@@ -387,3 +389,31 @@ def test_mock_visual_cli(media, monkeypatch):
     data = json.loads(output.with_suffix(".json").read_text())
     assert data["events"][0]["source"] == "mock-visual"
     assert output.with_suffix(".edl").read_text().strip().endswith(" 0")
+
+
+def test_sampler_timestamps_with_container_offset(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from angel_editor.visual.sampler import sample_frames
+
+    monkeypatch.setitem(
+        sys.modules,
+        "numpy",
+        types.SimpleNamespace(
+            uint8="uint8",
+            frombuffer=lambda data, dtype: types.SimpleNamespace(
+                reshape=lambda *shape: types.SimpleNamespace(shape=shape, data=data)
+            ),
+        ),
+    )
+    path = tmp_path / "offset.mp4"
+    run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=25", "-t", "3"]
+        + ["-c:v", "mpeg4", "-output_ts_offset", "1.4", str(path)]
+    )
+    # Timestamps are zero-based media time even though the container starts at 1.4 s.
+    coarse = [t for t, _ in sample_frames(path, 2)]
+    assert 0 <= coarse[0] < 0.5 and 2.5 <= coarse[-1] < 3
+    dense = [t for t, _ in sample_frames(path, 8, 1, 2)]
+    assert len(dense) >= 7 and all(1 <= t < 2 for t in dense)
