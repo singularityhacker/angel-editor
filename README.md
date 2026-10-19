@@ -81,13 +81,15 @@ the OpenCLIP architecture (default ViT-B-32, pretrained laion2b_s34b_b79k).
 Model libraries may download weights on first use; prepare their caches for offline work.
 `angel doctor` reports missing extras. Models are never bundled.
 
-Base sampling is 2 fps. Scores at or above the review threshold trigger a merged ±2-second
-window at 8 fps. Hits merge across gaps under one second, receive padding, snap to
+Frames stream directly from ffmpeg as BGR pixels, with both dimensions capped at 640
+pixels, bounded buffering, and no temporary frame files. Presentation timestamps are
+retained for base sampling and refinement. Base sampling is 2 fps. Scores at or above
+the review threshold trigger a merged ±2-second window at 8 fps. Hits merge across gaps under one second, receive padding, snap to
 PySceneDetect ContentDetector cuts within 0.75 seconds, and are dropped below minimum
 duration. Skip takes priority over mute. Mutes are applied in source time before the
 same A/V retained segments are concatenated, so edits after cuts remain synchronized.
-Per-frame scores are cached by full source SHA-256, detector model ID, base/dense fps,
-and review threshold. Policy thresholds can be reapplied without inference.
+Per-frame scores are cached by the v0 source fingerprint (size, mtime, first/last MiB),
+sampling format, detector model ID, base/dense fps, and review threshold. Policy thresholds can be reapplied without inference.
 
 Visual TOML rules use seconds for all durations:
 

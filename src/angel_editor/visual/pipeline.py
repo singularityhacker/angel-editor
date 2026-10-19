@@ -11,11 +11,16 @@ from .sampler import refine, sample_frames
 from .shots import detect_shots
 
 
-def available():
-    return all(
-        importlib.util.find_spec(name) is not None
+def missing_extras():
+    return [
+        name
         for name in ("scenedetect", "cv2", "nudenet", "open_clip", "torch")
-    )
+        if importlib.util.find_spec(name) is None
+    ]
+
+
+def available():
+    return not missing_extras()
 
 
 def analyze_visual(path, duration, settings, profile=None, detectors=None):
@@ -36,10 +41,7 @@ def analyze_visual(path, duration, settings, profile=None, detectors=None):
         raise RuntimeError(
             "Visual dependencies failed to load; install angel-editor[visual] and run angel doctor"
         ) from error
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
+    identity = cache.fingerprint(path)
     events = []
     fps, dense = settings.get("sample_fps", 2), settings.get("dense_fps", 8)
     for category, detector in detectors.items():
@@ -48,9 +50,9 @@ def analyze_visual(path, duration, settings, profile=None, detectors=None):
             continue
         key = json.dumps(
             [
-                "visual-v1",
+                "visual-v1-stream640",
                 category,
-                digest.hexdigest(),
+                identity,
                 detector.model_id,
                 fps,
                 dense,

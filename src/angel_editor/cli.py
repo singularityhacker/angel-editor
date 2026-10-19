@@ -10,7 +10,7 @@ from .media import probe, render, render_cuts, run
 from .pipeline import analyze
 from .schema import intervals
 from .visual.intervals import combine
-from .visual.pipeline import analyze_visual, available
+from .visual.pipeline import analyze_visual, available, missing_extras
 from .visual.profiles import resolve
 
 EXTENSIONS = {".mp4", ".m4v", ".mkv", ".mov"}
@@ -34,9 +34,11 @@ def doctor():
     print(
         f"{'PASS' if speech else 'WARN'} faster-whisper {'available' if speech else 'not installed'}"
     )
+    missing = missing_extras()
     print(
-        f"{'PASS' if available() else 'WARN'} visual extras "
-        f"{'available' if available() else 'missing; install angel-editor[visual]'}"
+        "WARN visual extras missing: " + ", ".join(missing) + "; install angel-editor[visual]"
+        if missing
+        else "PASS visual extras available"
     )
     print("WARN Models download on first ASR use; pre-cache the selected model for offline use")
     print("PASS CPU int8 backend; CUDA requires a compatible faster-whisper/CUDA installation")

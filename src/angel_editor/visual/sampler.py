@@ -1,53 +1,104 @@
+import queue
 import re
 import subprocess
-import tempfile
-from pathlib import Path
+import threading
+from collections import deque
 
 
 def sample_frames(path, fps=2, start=0, end=None):
-    """Decode sampled BGR frames; showinfo supplies presentation timestamps, not frame indices."""
-    import cv2
+    """Stream bounded BGR frames with presentation timestamps; close on early exit."""
+    import numpy as np
 
     filters = f"select='gte(t,{start})"
     if end is not None:
         filters += f"*lt(t,{end})"
-    filters += f"',fps={fps},showinfo"
+    filters += (
+        f"',fps={fps},scale=w='min(640,iw)':h='min(640,ih)'"
+        ":force_original_aspect_ratio=decrease,format=bgr24,showinfo"
+    )
     seek = ["-ss", str(start)] if start else []
     if end is not None:
         seek += ["-to", str(end)]
-    with tempfile.TemporaryDirectory() as directory:
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-v",
-                "info",
-                "-nostdin",
-                "-copyts",
-                *seek,
-                "-i",
-                str(path),
-                "-vf",
-                filters,
-                "-vsync",
-                "0",
-                str(Path(directory) / "%08d.png"),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode:
-            raise RuntimeError(result.stderr[-3000:])
-        times = [float(t) for t in re.findall(r"pts_time:([\d.eE+-]+)", result.stderr)]
-        paths = sorted(Path(directory).glob("*.png"))
-        if len(times) != len(paths):
-            raise RuntimeError("Frame timestamp count mismatch")
-        for t, frame in zip(times, paths):
+    process = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-v",
+            "info",
+            "-nostdin",
+            "-nostats",
+            "-copyts",
+            *seek,
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-vf",
+            filters,
+            "-vsync",
+            "0",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "pipe:1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    metadata = queue.Queue(maxsize=16)
+    stopped = threading.Event()
+    errors = deque(maxlen=20)
+
+    def enqueue(item):
+        while not stopped.is_set():
+            try:
+                metadata.put(item, timeout=0.1)
+                return
+            except queue.Full:
+                pass
+
+    def read_metadata():
+        try:
+            for raw in process.stderr:
+                line = raw.decode(errors="replace")
+                errors.append(line[-1000:])
+                match = re.search(r"pts_time:([\d.eE+-]+).*? s:(\d+)x(\d+)", line)
+                if match:
+                    enqueue((float(match[1]), int(match[2]), int(match[3])))
+        finally:
+            enqueue(None)
+
+    reader = threading.Thread(target=read_metadata, daemon=True)
+    reader.start()
+    try:
+        while (item := metadata.get()) is not None:
+            t, width, height = item
+            size = width * height * 3
+            data = bytearray()
+            while len(data) < size:
+                block = process.stdout.read(size - len(data))
+                if not block:
+                    raise RuntimeError("Incomplete sampled frame: " + "".join(errors)[-3000:])
+                data.extend(block)
             if t >= start and (end is None or t < end):
-                decoded = cv2.imread(str(frame))
-                if decoded is None:
-                    raise RuntimeError(f"Could not decode sampled frame at {t}s")
-                yield t, decoded
+                yield t, np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
+        if process.wait():
+            raise RuntimeError("".join(errors)[-3000:])
+    finally:
+        stopped.set()
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        reader.join()
+        process.stdout.close()
+        process.stderr.close()
 
 
 def refine(path, detector, scores, review, duration, dense_fps=8, sampler=sample_frames):

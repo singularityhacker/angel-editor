@@ -274,12 +274,74 @@ def test_sampler_timestamps(media, monkeypatch):
 
     from angel_editor.visual.sampler import sample_frames
 
-    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace(imread=lambda path: path))
+    # Core CI omits numpy/visual extras; retain real ffmpeg decoding and timestamps.
+    monkeypatch.setitem(
+        sys.modules,
+        "numpy",
+        types.SimpleNamespace(
+            uint8="uint8",
+            frombuffer=lambda data, dtype: types.SimpleNamespace(
+                reshape=lambda *shape: types.SimpleNamespace(shape=shape, data=data)
+            ),
+        ),
+    )
     path, _ = media
     frames = list(sample_frames(path, 2))
     assert [t for t, _ in frames] == [0, 0.5, 1, 1.5]
     dense = list(sample_frames(path, 8, 0.5, 1.5))
     assert [t for t, _ in dense] == [0.5 + i / 8 for i in range(8)]
+    fractional = list(sample_frames(path, 8, 0.55, 1.43))
+    assert [t for t, _ in fractional] == [0.625 + i / 8 for i in range(7)]
+
+
+def test_sampler_streams_and_closes(media, monkeypatch, tmp_path):
+    import subprocess
+    import sys
+    import tempfile
+    import types
+
+    from angel_editor.visual import sampler
+
+    monkeypatch.setitem(
+        sys.modules,
+        "numpy",
+        types.SimpleNamespace(
+            uint8="uint8",
+            frombuffer=lambda data, dtype: types.SimpleNamespace(
+                reshape=lambda *shape: types.SimpleNamespace(shape=shape, data=data)
+            ),
+        ),
+    )
+    processes = []
+    popen = subprocess.Popen
+
+    def paced_decoder(args, **kwargs):
+        assert args[-1] == "pipe:1" and "rawvideo" in args
+        args.insert(args.index("-i"), "-re")
+        process = popen(args, **kwargs)
+        processes.append(process)
+        return process
+
+    def no_temporary_files(*args, **kwargs):
+        pytest.fail("Sampler must not create temporary frame files")
+
+    monkeypatch.setattr(sampler.subprocess, "Popen", paced_decoder)
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", no_temporary_files)
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", no_temporary_files)
+    monkeypatch.chdir(tmp_path)
+    before = set(tmp_path.iterdir())
+    frames = sampler.sample_frames(media[0], 8)
+    try:
+        t, frame = next(frames)
+        assert t == 0
+        assert max(frame.shape[:2]) <= 640
+        assert len(frame.data) == frame.shape[0] * frame.shape[1] * 3
+        assert processes[0].poll() is None  # First yield precedes decoder completion.
+        assert set(tmp_path.iterdir()) == before
+    finally:
+        frames.close()
+    assert processes[0].poll() is not None
+    assert processes[0].stdout.closed and processes[0].stderr.closed
 
 
 def test_mock_visual_cli(media, monkeypatch):

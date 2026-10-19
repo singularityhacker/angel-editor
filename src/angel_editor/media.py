@@ -1,6 +1,7 @@
 import json
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 
 
@@ -104,6 +105,12 @@ def render_cuts(
         retained.append((cursor, duration))
     if not retained:
         raise ValueError("Skip intervals remove the entire video")
+    warnings.warn(
+        "Cut rendering retains primary video and audio only; subtitles, chapters, "
+        "extra video and data streams are dropped.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     audio = [s for s in info["streams"] if s["codec_type"] == "audio"]
     with tempfile.TemporaryDirectory(dir=output.parent) as directory:
         # Reuse the v0 all-channel mute/bleep implementation before cutting.

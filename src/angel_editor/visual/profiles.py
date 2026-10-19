@@ -15,7 +15,10 @@ def resolve(strictness="moderate", profile=None, settings=None):
             "pad_after": 0.25,
             "action": "skip",
         }
-        rule.update(profile.get(category, {}))
+        entry = profile.get(category, {})
+        if not isinstance(entry, dict):
+            raise TypeError(f"Visual rule {category} must be a TOML table")
+        rule.update(entry)
         override = settings.get(f"{category}_threshold")
         if override is not None:
             rule["threshold"] = override

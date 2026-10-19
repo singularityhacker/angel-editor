@@ -122,3 +122,21 @@ def test_shot_detector_mock(monkeypatch):
         ),
     )
     assert detect_shots("file") == [0, 1, 3]
+
+
+@pytest.mark.parametrize("entry", [False, "skip", 1, [], [["threshold", 0.5]]])
+def test_visual_rule_requires_table(entry):
+    with pytest.raises(TypeError, match="nudity must be a TOML table"):
+        resolve(profile={"nudity": entry})
+
+
+def test_missing_visual_extras(monkeypatch):
+    from angel_editor.visual import pipeline
+
+    monkeypatch.setattr(
+        pipeline.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "cv2" else None,
+    )
+    assert pipeline.missing_extras() == ["scenedetect", "nudenet", "open_clip", "torch"]
+    assert not pipeline.available()
