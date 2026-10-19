@@ -4,13 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "angel-editor"
-version = "0.1.0"
-description = "Local language filtering with edited MP4 output"
+version = "0.2.0"
+description = "Local language and visual filtering with edited MP4 output"
 requires-python = ">=3.10"
 dependencies = ["tomli; python_version < '3.11'"]
 
 [project.optional-dependencies]
 speech = ["faster-whisper"]
+visual = ["scenedetect[opencv]", "nudenet", "open_clip_torch", "torch"]
+all = ["angel-editor[speech,visual]"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

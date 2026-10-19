@@ -1,6 +1,6 @@
 # Angel Editor: Roadmap
 
-This roadmap follows [VISION.md](VISION.md) and the research in [docs/research/](research/). Nothing below is shipped yet. Metrics named in "done when" are measured on a human-annotated test set (dialogue, music, crosstalk, animation, brief exposure, graphic and non-graphic action). Numeric targets are left as "set after baseline" where the research gives no figure, because it says benchmarks should decide thresholds.
+This roadmap follows [VISION.md](VISION.md) and the research in [docs/research/](research/). v0 and the narrowed v1 implementation are shipped; broader research goals below remain open. Metrics named in "done when" are measured on a human-annotated test set (dialogue, music, crosstalk, animation, brief exposure, graphic and non-graphic action). Numeric targets are left as "set after baseline" where the research gives no figure, because it says benchmarks should decide thresholds.
 
 Shared rules for all milestones:
 
@@ -48,6 +48,17 @@ Shared rules for all milestones:
 - Installation is tested from a built package on each supported platform.
 
 ## v1: visual detection
+
+**Implementation status:** shipped per SPEC-v1: ContentDetector shot snapping, configurable
+2 fps sampling and 8 fps candidate refinement, NudeNet exposed classes, pluggable
+OpenCLIP violence classifier, visual profiles and flag/skip actions, source-time
+mute/cut reconciliation, libx264 CRF 18 cut rendering, JSON schema 2 and cut/mute
+EDLs, scan JSON files, season batching, and content/model/fps score caches. Core
+install remains lightweight; heavy detectors are mocked in CI. No-cut rendering
+retains the v0 video-copy path. Cut rendering retains primary video and audio;
+subtitle/chapter remapping, annotated-film benchmarks, real-player verification,
+and the broader category/model research listed below remain open. The following
+scope describes those broader research goals, not additional shipped promises.
 
 **Goal.** Generate reviewable skip ranges for nudity, sexual content, and violence as candidates, without claiming certainty.
 

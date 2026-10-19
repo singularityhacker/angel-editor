@@ -6,9 +6,12 @@ from pathlib import Path
 from . import cache
 from .exports import kodi_edl, mplayer_edl, timeline
 from .matching import tomllib
-from .media import probe, render, run
+from .media import probe, render, render_cuts, run
 from .pipeline import analyze
 from .schema import intervals
+from .visual.intervals import combine
+from .visual.pipeline import analyze_visual, available
+from .visual.profiles import resolve
 
 EXTENSIONS = {".mp4", ".m4v", ".mkv", ".mov"}
 
@@ -31,6 +34,10 @@ def doctor():
     print(
         f"{'PASS' if speech else 'WARN'} faster-whisper {'available' if speech else 'not installed'}"
     )
+    print(
+        f"{'PASS' if available() else 'WARN'} visual extras "
+        f"{'available' if available() else 'missing; install angel-editor[visual]'}"
+    )
     print("WARN Models download on first ASR use; pre-cache the selected model for offline use")
     print("PASS CPU int8 backend; CUDA requires a compatible faster-whisper/CUDA installation")
     try:
@@ -48,18 +55,26 @@ def doctor():
 
 def parser():
     root = argparse.ArgumentParser(
-        prog="angel", description="Local language filtering to clean MP4"
+        prog="angel", description="Local language and visual filtering to clean MP4"
     )
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="Check local dependencies")
-    for name in ("clean", "scan"):
+    for name in ("clean", "run", "scan"):
         command = commands.add_parser(name)
         command.add_argument("inputs", nargs="+")
         command.add_argument("-o", "--output")
         command.add_argument("--mode", choices=["mute", "bleep"], default="mute")
         command.add_argument(
-            "--strictness", choices=["mild", "moderate", "strict"], default="moderate"
+            "--strictness", choices=["mild", "lenient", "moderate", "strict"], default="moderate"
         )
+        command.add_argument("--no-visual", action="store_true")
+        command.add_argument("--sample-fps", type=float, default=2)
+        command.add_argument("--dense-fps", type=float, default=8)
+        command.add_argument("--snap-window", type=float, default=0.75)
+        command.add_argument("--nudity-threshold", type=float)
+        command.add_argument("--violence-threshold", type=float)
+        command.add_argument("--violence-model", default="ViT-B-32")
+        command.add_argument("--preset", default="medium")
         command.add_argument("--subs", default="auto", metavar="auto|PATH|off")
         command.add_argument("--asr", choices=["auto", "off"], default="auto")
         command.add_argument("--model", default="small")
@@ -84,6 +99,12 @@ def main(argv=None):
         return 2
     if args.pad_before < 0 or args.pad_after < 0:
         root.error("Padding must be nonnegative")
+    if not (
+        0 < args.sample_fps <= 120
+        and 0 < args.dense_fps <= 120
+        and 0 <= args.snap_window < float("inf")
+    ):
+        root.error("Invalid sampling fps or snap window")
     settings = {
         key: value
         for key, value in vars(args).items()
@@ -91,6 +112,7 @@ def main(argv=None):
     }
     try:
         profile = tomllib.loads(args.profile.read_text()) if args.profile else {}
+        resolve(args.strictness, profile, settings)
         if not isinstance(profile.get("allowlist", []), list) or not all(
             isinstance(word, str) for word in profile.get("allowlist", [])
         ):
@@ -147,30 +169,56 @@ def main(argv=None):
                 raise ValueError("Output must differ from input")
             info = probe(path)
             identity, events, warnings = analyze(path, info, settings, profile)
+            if not args.no_visual and not available():
+                warnings.append(
+                    "Visual analysis unavailable; install angel-editor[visual]; run angel doctor"
+                )
+            visual = analyze_visual(path, float(info["format"]["duration"]), settings, profile)
             spans = intervals(
                 events,
                 round(float(info["format"]["duration"]) * 1e6),
                 args.pad_before * 1000,
                 args.pad_after * 1000,
             )
+            spans, skips = combine(spans, visual)
+            events.extend(visual)
             for warning in warnings:
                 print(f"WARN {path.name}: {warning}", file=sys.stderr)
             if args.command == "scan":
-                print(timeline(identity, settings, events), end="")
+                content = timeline(identity, settings, events)
+                target = output.with_suffix(".json")
+                if target.exists() and not args.overwrite and not args.dry_run:
+                    raise FileExistsError(f"Output exists: {target}; use --overwrite")
+                if not args.dry_run:
+                    target.write_text(content)
+                print(content, end="")
                 continue
             exports = {}
             if args.json:
                 exports[output.with_suffix(".json")] = timeline(identity, settings, events)
             if args.edl:
                 writer = kodi_edl if args.edl == "kodi" else mplayer_edl
-                exports[output.with_suffix(".edl")] = writer(spans)
+                exports[output.with_suffix(".edl")] = writer(spans, skips)
             for target in [output, *exports]:
                 if target.exists() and not args.overwrite and not args.dry_run:
                     raise FileExistsError(f"Output exists: {target}; use --overwrite")
                 if target.resolve() in {p.resolve() for p in paths}:
                     raise ValueError("Output would overwrite an input")
             if not args.dry_run:
-                render(path, output, info, spans, args.mode, args.bleep_level, args.overwrite)
+                if skips:
+                    render_cuts(
+                        path,
+                        output,
+                        info,
+                        spans,
+                        skips,
+                        args.mode,
+                        args.bleep_level,
+                        args.overwrite,
+                        args.preset,
+                    )
+                else:
+                    render(path, output, info, spans, args.mode, args.bleep_level, args.overwrite)
                 for target, content in exports.items():
                     target.write_text(content)
             print(

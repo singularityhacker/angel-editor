@@ -12,6 +12,8 @@ from .subtitles import parse
 def analyze(path, info, settings, profile=None, transcriber=None):
     identity = cache.fingerprint(path)
     duration = round(float(info["format"]["duration"]) * 1e6)
+    if settings["subs"] == "off" and settings["asr"] == "off":
+        return identity, [], ["Language analysis disabled explicitly"]
     cues = None
     subs = settings["subs"]
     if subs != "off":

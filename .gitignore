@@ -17,3 +17,8 @@ build/
 .cache/
 *.angel.json
 *.edl
+
+*.onnx
+*.pt
+*.safetensors
+models/

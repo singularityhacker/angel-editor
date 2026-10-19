@@ -148,7 +148,8 @@ def test_subs_cli_batch(media, capsys):
     assert identity and events[0].accuracy == "cue" and warnings
     assert events[0].start_us == 500000
     assert main(["scan", str(path), "--asr", "off"]) == 0
-    assert main(["clean", str(path), "--asr", "off", "--json", "--edl", "kodi"]) == 0
+    assert path.with_name("sample.angel.json").exists()
+    assert main(["clean", str(path), "--asr", "off", "--json", "--edl", "kodi", "--overwrite"]) == 0
     data = json.loads(path.with_name("sample.angel.json").read_text())
     assert data["events"][0]["source"] == "subs"
     assert main(["clean", str(path), "--asr", "off"]) == 1
@@ -241,3 +242,86 @@ def test_embedded_and_multiple_tracks(media):
         samples.frombytes(data)
         for channel in range(channels):
             assert rms(samples[channel::channels][35000:50000]) < 0.001
+
+
+def test_cut_render(media):
+    from angel_editor.media import render_cuts
+
+    path, channels = media
+    output = path.with_name("cut.mp4")
+    render_cuts(
+        path,
+        output,
+        probe(path),
+        [(1400000, 1800000)],
+        [(200000, 500000), (800000, 1100000)],
+        preset="ultrafast",
+    )
+    info = probe(output)
+    assert abs(float(info["format"]["duration"]) - 1.4) < 0.06
+    assert {s["codec_type"] for s in info["streams"]} == {"video", "audio"}
+    video, audio = (
+        next(s for s in info["streams"] if s["codec_type"] == kind) for kind in ("video", "audio")
+    )
+    assert abs(float(video["duration"]) - float(audio["duration"])) < 0.05
+    for samples in decode(output, channels):
+        assert rms(samples[round(0.9 * 48000) : round(1.1 * 48000)]) < 0.001
+
+
+def test_sampler_timestamps(media, monkeypatch):
+    import sys
+    import types
+
+    from angel_editor.visual.sampler import sample_frames
+
+    monkeypatch.setitem(sys.modules, "cv2", types.SimpleNamespace(imread=lambda path: path))
+    path, _ = media
+    frames = list(sample_frames(path, 2))
+    assert [t for t, _ in frames] == [0, 0.5, 1, 1.5]
+    dense = list(sample_frames(path, 8, 0.5, 1.5))
+    assert [t for t, _ in dense] == [0.5 + i / 8 for i in range(8)]
+
+
+def test_mock_visual_cli(media, monkeypatch):
+    from angel_editor.visual import pipeline
+    from angel_editor.visual.detectors import FrameScore
+
+    path, _ = media
+
+    class Detector:
+        model_id = "mock-visual"
+
+        def detect(self, frames):
+            return [FrameScore(0.5, "nudity", 0.95, ["exposed"])]
+
+    monkeypatch.setattr(pipeline, "available", lambda: True)
+    monkeypatch.setattr("angel_editor.cli.available", lambda: True)
+    monkeypatch.setattr(pipeline, "NudityDetector", Detector)
+    monkeypatch.setattr(pipeline, "ViolenceDetector", lambda model: Detector())
+    monkeypatch.setattr(pipeline, "detect_shots", lambda path: [])
+    monkeypatch.setattr(pipeline, "sample_frames", lambda path, fps: [])
+    monkeypatch.setattr(pipeline, "refine", lambda path, detector, scores, *args: scores)
+    assert (
+        main(
+            [
+                "run",
+                str(path),
+                "--subs",
+                "off",
+                "--asr",
+                "off",
+                "--json",
+                "--edl",
+                "kodi",
+                "--no-cache",
+                "--snap-window",
+                "0",
+            ]
+        )
+        == 0
+    )
+    output = path.with_name("sample.angel.mp4")
+    assert float(probe(output)["format"]["duration"]) < 1.5
+    data = json.loads(output.with_suffix(".json").read_text())
+    assert data["events"][0]["source"] == "mock-visual"
+    assert output.with_suffix(".edl").read_text().strip().endswith(" 0")
