@@ -21,8 +21,8 @@ You bring your own API keys for the optional AI features. The core works offline
 ## Progressive elaboration (roadmap)
 - **v0, language filtering that works.** Transcribe locally with Whisper (word-level timestamps), match against a configurable word list with severity tiers, and mute or bleep exactly those words. Use existing subtitles as a fast path when they're present. Output a clean edited MP4 by default, with optional EDL/JSON export. Batch over a whole season folder.
 - **v1, visual detection.** Detect shots, sample frames per shot, and run local classifiers (nudity and sexual content, violence and gore) with thresholds per category. Merge detections into scene-level skip ranges, with padding and minimum durations.
-- **v2, smarter judgment with AI.** Optionally send flagged segments (frames plus transcript) to a vision-language model (your own key, or a local model) to grade severity and context ("a kiss" vs "a sex scene", "cartoon violence" vs "gore"). This cuts false positives and makes thresholds feel human.
-- **v3, generative gap filling.** Instead of a hard jump cut, generate a short bridge clip from the frames just before and just after a removed scene, using frame interpolation or a first-frame/last-frame video model. Audio is cross-faded or regenerated.
+- **v2, generative scene replacement (official target).** After v1 cuts a violent or nude scene, a video generative model fills the gap. It gets the frames before and after the cut to match the style, plus a description of what originally happened, rewritten to communicate the same event in a less grotesque way. The goal is a working demo on a few sample clips Justice will provide.
+- **v3, smarter judgment with AI.** Optionally send flagged segments to a vision-language model (your own key, or a local model) to grade severity and context ("a kiss" vs "a sex scene"). This cuts false positives and makes thresholds feel human.
 - **Later:** a review UI, shareable filter profiles (profiles only, never media), and a series mode that reuses recurring intros and characters across episodes.
 
 ## Principles

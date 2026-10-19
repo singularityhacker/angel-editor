@@ -73,7 +73,34 @@ Shared rules for all milestones:
 - Rendered cuts keep A/V sync across multiple cuts, and final duration matches the retained-interval map.
 - Runtime and peak memory for a 45-minute episode are published for CPU and GPU.
 
-## v2: optional AI severity grading
+## v2: generative scene replacement (official target)
+
+**Goal.** After v1's visual detection cuts a violent or nude scene, a video generative model fills the removed section with a toned-down version of the same event, so the story still makes sense and nothing jumps.
+
+**How it works**
+- The model gets the frames just before the cut and the frames just after it, so the fill matches the film's look, lighting, and characters.
+- It also gets a text description of what originally happened in the scene, rewritten to communicate the same event in a less grotesque way (for example, "the attacker is struck down" instead of a graphic depiction).
+- The generated clip replaces the removed section in the edited MP4.
+
+**Target.** A working demonstration on a few sample clips. Justice will provide the sample clips.
+
+**Legal caveat.** Generated replacement footage is added content in a fixed copy. It falls clearly outside the Family Movie Act and is private-use only, at the user's responsibility. A legal review is an open item before this ships. Hosted providers receive frames from the film, and their terms and safety filters apply.
+
+**Building blocks (from research)**
+- First/last-frame video models: local Wan FLF2V, or a hosted model (Veo, Kling, Luma) with the user's own key.
+- A scene-description step (VLM or transcript) that produces the softened prompt; the prompt is saved in the timeline for review.
+- Fallback chain when generation fails quality gates: interpolation, then cross-dissolve with room tone, then hard cut. A render always completes.
+- Generated output is re-checked with the v1 detectors.
+
+**Out of scope**
+- Generated dialogue, voice cloning, or score; sharing generated clips.
+
+**Done when**
+- Justice's sample clips each produce an edited MP4 where the removed scene is replaced by a generated, toned-down bridge that matches the surrounding footage.
+- The softened descriptions and generation settings are recorded per clip.
+- Re-detection finds no flagged content in accepted fills.
+
+## v3: optional AI severity grading
 
 **Goal.** Reduce false positives and make thresholds feel human by grading flagged segments with a vision-language model.
 
@@ -87,7 +114,7 @@ Shared rules for all milestones:
 - New extra such as `[vlm]`.
 
 **Out of scope**
-- Sending whole files, grading without a v1 candidate, treating VLM output as ground truth, gap filling.
+- Sending whole files, grading without a v1 candidate, treating VLM output as ground truth, scene replacement.
 
 **Done when**
 - On the test set, false skipped seconds per hour drop against v1-only at equal or better visual-event recall. Both are reported.
@@ -95,31 +122,6 @@ Shared rules for all milestones:
 - Tests show a refusal and a malformed response each produce `unknown`, not a pass.
 - Cost per 45-minute episode and local runtime and memory are measured, not estimated.
 - No data leaves the machine unless the user enabled the feature, and the request payload is inspectable.
-
-## v3: gap filling
-
-**Goal.** Replace hard jump cuts with short bridges where it helps, and never fail a render.
-
-**Legal caveat.** Generated bridges are added content in a fixed copy. They fall clearly outside the Family Movie Act and are private-use only, at the user's responsibility. A legal review is an open item before this ships. Hosted providers receive frames from the film, and their terms and safety filters apply.
-
-**Scope**
-- Fallback chain: first/last-frame generation, then RIFE or FILM interpolation (only when endpoints are similar), then cross-dissolve, then hard cut.
-- Baseline without generation: short A/V cross-dissolve (4–12 frames), room tone, optional fade through black.
-- Audio tiers: equal-power cross-fade (150–500 ms), room-tone fill, cut points snapped to word and sentence boundaries. No generated dialogue or music.
-- Generative path for 2–4 s gaps within one location: local Wan FLF2V, or a hosted model with the user's key, behind an explicit `--bridge=generate` flag.
-- Provider plugin interface with a mock provider for tests; bridges cached by endpoint hashes.
-- Quality gates: face similarity against endpoint frames, color delta, flow continuity. Grade matching, resampling to source frame rate and resolution, and film grain.
-- Generated output re-checked with the v1/v2 detectors.
-
-**Out of scope**
-- Generated dialogue, voice cloning, or score; whole-scene generation; sharing bridge clips.
-
-**Done when**
-- Every failure of a stage falls through the chain, and a render always completes. Tested with a failing mock provider.
-- Gate pass and reject rates are reported on test gaps, and rejected bridges are never used.
-- Re-detection finds no flagged content in accepted bridges.
-- Seams are checked for A/V sync and duration. Cost and runtime per bridge are measured per provider.
-- Docs and CLI help state the legal caveat at the point of use.
 
 ## Later
 
